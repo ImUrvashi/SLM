@@ -1,6 +1,6 @@
 # SLM Pre-Training 1
 
-This document is a structured walkthrough of the notebook [slm-with-tinystories-gpt4-clean.ipynb](/Users/urvashibansal/Ddrive/IIScWork/CVs/Projects/SLM/slm-with-tinystories-gpt4-clean.ipynb).
+This document is a structured walkthrough of the notebook [slm-with-tinystories-gpt4-clean.ipynb](../notebooks/slm-with-tinystories-gpt4-clean.ipynb).
 
 It is written to explain:
 

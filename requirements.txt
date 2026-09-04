@@ -1,0 +1,7 @@
+datasets
+tiktoken
+numpy
+tqdm
+torch
+matplotlib
+ipykernel
