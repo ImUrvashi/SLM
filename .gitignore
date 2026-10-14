@@ -6,5 +6,5 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Private notes
-docs
+docs/
 commands.md
