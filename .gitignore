@@ -4,3 +4,7 @@ __pycache__/
 *.bin
 *.pt
 .ipynb_checkpoints/
+
+# Private notes
+docs
+commands.md
