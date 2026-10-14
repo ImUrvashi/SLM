@@ -1,0 +1,30 @@
+#!/bin/bash
+#PBS -N slm-train
+#PBS -q GPU_only
+#PBS -l select=1:ncpus=8
+#PBS -j oe
+
+# Everything below is written live to this log
+exec > /home/urvashib/projects/SLM/slm-train.log 2>&1
+
+cd /home/urvashib/projects/SLM
+source .venv/bin/activate
+
+# Use the GPU with the least memory in use (other users share this node)
+export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \
+                              | sort -t, -k2 -n | head -1 | cut -d, -f1)
+
+echo "Started: $(date)"
+echo "Host:    $(hostname)"
+echo "GPU:     $CUDA_VISIBLE_DEVICES"
+echo "Python:  $(which python)"
+python -c "import torch; print('CUDA:   ', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+
+cd notebooks
+jupyter nbconvert --to notebook --execute \
+  --ExecutePreprocessor.kernel_name=slm-venv \
+  --ExecutePreprocessor.timeout=-1 \
+  --output slm-output.ipynb \
+  slm-with-tinystories-gpt4-clean_casual-attention.ipynb
+
+echo "Finished: $(date)"

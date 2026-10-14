@@ -1,0 +1,15 @@
+#!/bin/bash
+# Run any command on the GPU compute node (PBS GPU_only queue) with the project .venv,
+# a free GPU, and the current directory. Output streams back to your terminal.
+#
+#   scripts/gpurun python my_script.py
+#   scripts/gpurun nvidia-smi
+set -e
+[ $# -eq 0 ] && { echo "usage: scripts/gpurun <command> [args...]"; exit 1; }
+
+PROJECT=/home/urvashib/projects/SLM
+PICK_GPU='nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | sort -t, -k2 -n | head -1 | cut -d, -f1'
+
+CMD="cd $(printf %q "$PWD") && source $PROJECT/.venv/bin/activate && export CUDA_VISIBLE_DEVICES=\$($PICK_GPU) && echo \"[gpurun] \$(hostname), GPU \$CUDA_VISIBLE_DEVICES\" && $(printf '%q ' "$@")"
+
+exec qsub -I -q GPU_only -l select=1:ncpus=8 -N slm-run -- /bin/bash -c "$CMD"

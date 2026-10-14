@@ -1,0 +1,13 @@
+{
+    // Language features (autocomplete, linting) use the project venv.
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+
+    // Hide the plain .venv from the notebook kernel picker: it would run on master (no GPU).
+    // Pick "SLM .venv (GPU compute node)" instead; it runs on the compute node.
+    "jupyter.kernels.excludePythonEnvironments": [
+        "/home/urvashib/projects/SLM/.venv/bin/python"
+    ],
+
+    // Shift+Enter in a .py file runs it in the Interactive Window (GPU kernel), not a master terminal.
+    "jupyter.interactiveWindow.textEditor.executeSelection": true
+}

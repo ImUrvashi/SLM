@@ -1,0 +1,13 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run current file on GPU node",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/gpurun python ${file}",
+            "options": { "cwd": "${fileDirname}" },
+            "problemMatcher": [],
+            "group": { "kind": "build", "isDefault": true }
+        }
+    ]
+}
