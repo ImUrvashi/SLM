@@ -4,8 +4,8 @@
 Used by the "SLM .venv (GPU compute node)" kernelspec (slm-venv).
 
 - On the compute node (e.g. inside a PBS batch job): starts ipykernel directly.
-- On master: submits an interactive PBS job to GPU_only, starts ipykernel there on a
-  free GPU, and tunnels the kernel's ZMQ ports back to master over SSH. When the kernel
+- On master: submits an interactive PBS job to GPU_only, starts ipykernel there,
+  and tunnels the kernel's ZMQ ports back to master over SSH. When the kernel
   is shut down/restarted (or VS Code goes away) the PBS job is deleted.
 """
 import json
@@ -25,13 +25,6 @@ QUEUE = "GPU_only"
 NCPUS = 8
 RUNTIME = Path.home() / ".local/share/jupyter/runtime/gpu-kernels"  # on shared /home
 PORT_KEYS = ("shell_port", "iopub_port", "stdin_port", "control_port", "hb_port")
-
-# Picks the GPU with the least memory in use (the node is shared with other users).
-PICK_GPU = (
-    "nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits"
-    " | sort -t, -k2 -n | head -1 | cut -d, -f1"
-)
-
 
 def log(msg):
     print(f"[gpu_kernel] {msg}", file=sys.stderr, flush=True)
@@ -59,14 +52,17 @@ def run_remote(conn):
         if time.time() - alive.stat().st_mtime > 300:
             for f in RUNTIME.glob(f"{alive.stem}.*"):
                 f.unlink(missing_ok=True)
-    tag =f"{conn.stem}-{os.getpid()}"
+    tag = f"{conn.stem}-{os.getpid()}"
     remote_conn = RUNTIME / f"{tag}.json"
     jobid_file = RUNTIME / f"{tag}.jobid"
     heartbeat = RUNTIME / f"{tag}.alive"
     job_script = RUNTIME / f"{tag}.sh"
+    log_file = RUNTIME / f"{tag}.log"
 
-    info["ip"] = "127.0.0.1"
-    remote_conn.write_text(json.dumps(info))
+    # VS Code chooses ports on master, which may already be occupied on compute.
+    # Let ipykernel bind free ports there and publish them in its connection file.
+    remote_info = dict(info, ip="127.0.0.1", **dict.fromkeys(PORT_KEYS, 0))
+    remote_conn.write_text(json.dumps(remote_info))
     os.chmod(remote_conn, 0o600)
     heartbeat.touch()
 
@@ -94,16 +90,19 @@ wait $KPID
         f"qsub -I -q {QUEUE} -l select=1:ncpus={NCPUS} -N slm-kernel "
         f"-- /bin/bash {shlex.quote(str(job_script))}"
     )
+    job_log = log_file.open("w")
+    os.chmod(log_file, 0o600)
     job = subprocess.Popen(
         ["script", "-qfec", qsub_cmd, "/dev/null"],
-        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdin=subprocess.PIPE, stdout=job_log, stderr=subprocess.STDOUT,
         start_new_session=True,
     )
     log(f"submitted kernel job to {QUEUE}, waiting for it to start ...")
+    log(f"startup log: {log_file}")
 
     tunnel = None
 
-    def cleanup(*_):
+    def cleanup(*_, exit_code=0):
         jobid = jobid_file.read_text().strip() if jobid_file.exists() else ""
         if jobid:
             subprocess.run(["qdel", jobid], capture_output=True)
@@ -115,33 +114,57 @@ wait $KPID
                     pass
         for f in (remote_conn, jobid_file, heartbeat, job_script):
             f.unlink(missing_ok=True)
-        sys.exit(0)
+        job_log.close()
+        sys.exit(exit_code)
+
+    def fail(message):
+        log(message)
+        log(f"startup log: {log_file}")
+        print(log_file.read_text(errors="replace")[-8000:], file=sys.stderr, flush=True)
+        cleanup(exit_code=1)
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, cleanup)
 
     while not jobid_file.exists():
         if job.poll() is not None:
-            log("PBS job ended before the kernel started (check `qstat -Q`, max 2 jobs per user)")
-            cleanup()
+            fail(f"PBS job ended before the kernel started (exit {job.returncode})")
+        heartbeat.touch()
         time.sleep(1)
     log(f"job {jobid_file.read_text().strip()} running on {COMPUTE_HOST}")
 
+    # ipykernel rewrites the shared connection file after binding all five ports.
+    deadline = time.monotonic() + 60
+    while True:
+        if job.poll() is not None:
+            fail(f"PBS job ended before the kernel opened its ports (exit {job.returncode})")
+        heartbeat.touch()
+        try:
+            remote_info = json.loads(remote_conn.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            remote_info = {}
+        if all(remote_info.get(key, 0) > 0 for key in PORT_KEYS):
+            break
+        if time.monotonic() >= deadline:
+            fail("timed out waiting for the compute kernel to open its ports")
+        time.sleep(0.2)
+
     forwards = []
     for key in PORT_KEYS:
-        forwards += ["-L", f"127.0.0.1:{info[key]}:127.0.0.1:{info[key]}"]
+        forwards += ["-L", f"127.0.0.1:{info[key]}:127.0.0.1:{remote_info[key]}"]
     tunnel = subprocess.Popen(
-        ["ssh", "-N", "-o", "BatchMode=yes", "-o", "LogLevel=QUIET", "-o", "ExitOnForwardFailure=yes",
+        ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
          "-o", "ServerAliveInterval=30", *forwards, COMPUTE_HOST],
-        stdin=subprocess.DEVNULL, start_new_session=True,
+        stdin=subprocess.DEVNULL, stderr=job_log, start_new_session=True,
     )
 
     while job.poll() is None:
         heartbeat.touch()
         if tunnel.poll() is not None:
-            log("SSH tunnel to compute node closed")
-            break
+            fail(f"SSH tunnel to compute node closed (exit {tunnel.returncode})")
         time.sleep(2)
+    if job.returncode:
+        fail(f"PBS kernel job exited with status {job.returncode}")
     cleanup()
 
 
